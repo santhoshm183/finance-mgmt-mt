@@ -47,7 +47,9 @@ All endpoints are rooted at `/api`; JSON dates use ISO-8601 local dates (`yyyy-M
 | GET | `/api/loans/{id}` | Get loan |
 | POST | `/api/loans` | Create loan |
 | GET | `/api/cash-flow` | Read investment, financial balance, profit, and collection totals |
+| GET | `/api/cash-flow/transfers` | List cash transfer history |
 | POST | `/api/cash-flow/transfers` | Transfer capital between tracked balances |
+| GET | `/api/collections/history` | List financial transaction history, including linked customer and loan names |
 | POST | `/api/collections` | Record a collected amount or profit transaction |
 | GET | `/api/payments/pending` | List loans whose next installment date is today or later |
 
@@ -76,7 +78,11 @@ All endpoints are rooted at `/api`; JSON dates use ISO-8601 local dates (`yyyy-M
 {"fromAccount":"INVESTMENT","amount":500,"date":"2026-10-17"}
 ```
 
-Customer `name` is required; `mobileNumber` and `address` are optional and may be omitted, null, or blank. `loanType` is `INSTALLMENT_BASED` or `MONTHLY_INTEREST`; `repaymentFrequency` is `DAILY`, `WEEKLY`, or `MONTHLY`; collection `transactionType` is `COLLECTED` or `PROFIT`; transfer `fromAccount` is `INVESTMENT`, `FINANCIAL_BALANCE`, `PROFIT`, or `COLLECTION`. Loan principal and installment amounts must be positive; interest rate must be nonnegative (zero-interest loans are supported). Transfer and collection amounts must be positive. The legacy transfer request key `source` is accepted as an alias for `fromAccount`; responses continue to report the account as `source`. Weekly loans require a valid uppercase or lowercase weekday name; other frequencies reject `weeklyDay`.
+Customer `name` is required and must be unique ignoring case and surrounding whitespace; `mobileNumber` and `address` are optional and may be omitted, null, or blank. `loanType` is `INSTALLMENT_BASED` or `MONTHLY_INTEREST`; `repaymentFrequency` is `DAILY`, `WEEKLY`, or `MONTHLY`; collection `transactionType` is `COLLECTED` or `PROFIT`; transfer `fromAccount` is `INVESTMENT`, `FINANCIAL_BALANCE`, `PROFIT`, or `COLLECTION`. Loan principal and installment amounts must be positive; interest rate must be nonnegative (zero-interest loans are supported). Transfer and collection amounts must be positive. The legacy transfer request key `source` is accepted as an alias for `fromAccount`; responses continue to report the account as `source`. Weekly loans require a valid uppercase or lowercase weekday name; other frequencies reject `weeklyDay`.
+
+`MONTHLY_INTEREST` loans require `MONTHLY` repayment frequency. The finance UI restricts that loan type to monthly; the API enforces the same rule for direct requests.
+
+Collections for `INSTALLMENT_BASED` loans must use `COLLECTED`; collections for `MONTHLY_INTEREST` loans must use `PROFIT`. The UI selects the matching transaction type automatically, and the API rejects mismatches.
 
 Customer names are stored and returned as UTF-8. Loan IDs use the customer name with Unicode letters/digits preserved and other characters separated by hyphens, followed by `-DDMMYYYY` from `startDate` (for example, `Asha-Rao-17102026`). If that ID already exists, a numeric suffix (`-2`, `-3`, ...) is added. Loan creation locks the singleton cash-flow row before checking/allocating IDs and debiting the principal, so concurrent creations cannot allocate the same ID or overspend the balance.
 
