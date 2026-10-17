@@ -71,6 +71,10 @@ public class LoanService {
     }
 
     private DayOfWeek parseWeeklyDay(LoanRequest request) {
+        if (request.loanType() == LoanType.MONTHLY_INTEREST
+                && request.repaymentFrequency() != RepaymentFrequency.MONTHLY) {
+            throw new BadRequestException("MONTHLY_INTEREST loans require MONTHLY repaymentFrequency");
+        }
         if (request.repaymentFrequency() == RepaymentFrequency.WEEKLY) {
             if (request.weeklyDay() == null || request.weeklyDay().isBlank())
                 throw new BadRequestException("weeklyDay is required for WEEKLY repaymentFrequency");

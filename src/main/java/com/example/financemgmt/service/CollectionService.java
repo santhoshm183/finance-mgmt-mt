@@ -1,9 +1,11 @@
 package com.example.financemgmt.service;
 
 import com.example.financemgmt.dto.CollectionRequest;
+import com.example.financemgmt.exception.BadRequestException;
 import com.example.financemgmt.exception.NotFoundException;
 import com.example.financemgmt.model.CashFlow;
 import com.example.financemgmt.model.Loan;
+import com.example.financemgmt.model.LoanType;
 import com.example.financemgmt.model.TransactionType;
 import com.example.financemgmt.repository.LoanRepository;
 import org.springframework.stereotype.Service;
@@ -25,6 +27,11 @@ public class CollectionService {
         CashFlow account = cashFlowService.lock();
         Loan loan = loanRepository.findLockedById(request.loanId())
                 .orElseThrow(() -> new NotFoundException("Loan " + request.loanId() + " was not found"));
+        TransactionType expectedType = loan.getLoanType() == LoanType.MONTHLY_INTEREST
+                ? TransactionType.PROFIT : TransactionType.COLLECTED;
+        if (request.transactionType() != expectedType) {
+            throw new BadRequestException("Transaction type for this loan must be " + expectedType);
+        }
         cashFlowService.collect(account, request.amount(), request.collectionDate(), loan.getId(), request.transactionType());
         if (request.transactionType() == TransactionType.COLLECTED) {
             DayOfWeek day = loan.getWeeklyDay() == null ? null : DayOfWeek.valueOf(loan.getWeeklyDay());

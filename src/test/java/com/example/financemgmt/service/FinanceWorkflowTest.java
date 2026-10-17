@@ -55,6 +55,7 @@ class FinanceWorkflowTest {
         assertEquals(new BigDecimal("900.00"), cashFlowService.get().getFinancialBalance());
         assertEquals(new BigDecimal("10.00"), cashFlowService.get().getProfitAmount());
         assertEquals(1, transactionRepository.count());
+        assertEquals("Ada Lovelace", cashFlowService.transactionHistory().getFirst().customerName());
 
         collectionService.collect(new CollectionRequest(loan.getId(), LocalDate.of(2025, 2, 28),
                 new BigDecimal("30"), TransactionType.COLLECTED));
@@ -87,8 +88,18 @@ class FinanceWorkflowTest {
                 LocalDate.of(2025, 1, 1), BigDecimal.ONE);
         assertThrows(BadRequestException.class, () -> loanService.create(invalidDay));
         assertThrows(com.example.financemgmt.exception.NotFoundException.class, () -> loanService.create(new LoanRequest(999999L,
-                LoanType.MONTHLY_INTEREST, BigDecimal.TEN, BigDecimal.ONE, RepaymentFrequency.DAILY, null,
+                LoanType.INSTALLMENT_BASED, BigDecimal.TEN, BigDecimal.ONE, RepaymentFrequency.DAILY, null,
                 LocalDate.of(2025, 1, 1), BigDecimal.ONE)));
+    }
+
+    @Test
+    void requiresMonthlyFrequencyForMonthlyInterestLoans() {
+        Customer customer = customerService.create(new CustomerRequest("Monthly Customer", null, null, null));
+        LoanRequest invalidFrequency = new LoanRequest(customer.getId(), LoanType.MONTHLY_INTEREST,
+                BigDecimal.TEN, BigDecimal.ONE, RepaymentFrequency.WEEKLY, "MONDAY",
+                LocalDate.of(2025, 1, 1), BigDecimal.ONE);
+
+        assertThrows(BadRequestException.class, () -> loanService.create(invalidFrequency));
     }
 
     @Test
@@ -125,6 +136,38 @@ class FinanceWorkflowTest {
     }
 
     @Test
+    void rejectsDuplicateCustomerNamesIgnoringCaseAndSurroundingWhitespace() {
+        Customer existing = customerService.create(new CustomerRequest("Asha Rao", null, null, null));
+        customerService.update(existing.getId(), new CustomerRequest(" asha rao ", null, null, null));
+
+        assertThrows(ConflictException.class,
+                () -> customerService.create(new CustomerRequest(" asha rao ", null, null, null)));
+        Customer other = customerService.create(new CustomerRequest("Grace", null, null, null));
+        assertThrows(ConflictException.class,
+                () -> customerService.update(other.getId(), new CustomerRequest("ASHA RAO", null, null, null)));
+    }
+
+    @Test
+    void rejectsCollectionTypeThatDoesNotMatchLoanType() {
+        Customer customer = customerService.create(new CustomerRequest("Collection Customer", null, null, null));
+        cashFlowService.lock().setFinancialBalance(new BigDecimal("100.00"));
+        Loan loan = loanService.create(new LoanRequest(customer.getId(), LoanType.MONTHLY_INTEREST,
+                BigDecimal.TEN, BigDecimal.ONE, RepaymentFrequency.MONTHLY, null,
+                LocalDate.of(2025, 1, 1), BigDecimal.ONE));
+
+        assertThrows(BadRequestException.class,
+                () -> collectionService.collect(new CollectionRequest(loan.getId(), LocalDate.of(2025, 2, 1),
+                        BigDecimal.ONE, TransactionType.COLLECTED)));
+
+        Loan installmentLoan = loanService.create(new LoanRequest(customer.getId(), LoanType.INSTALLMENT_BASED,
+                BigDecimal.TEN, BigDecimal.ZERO, RepaymentFrequency.MONTHLY, null,
+                LocalDate.of(2025, 1, 1), BigDecimal.ONE));
+        assertThrows(BadRequestException.class,
+                () -> collectionService.collect(new CollectionRequest(installmentLoan.getId(),
+                        LocalDate.of(2025, 2, 1), BigDecimal.ONE, TransactionType.PROFIT)));
+    }
+
+    @Test
     void acceptsFrontendFromAccountTransferContractAndLegacyAlias() throws Exception {
         TransferRequest request = objectMapper.readValue(
                 """
@@ -136,5 +179,16 @@ class FinanceWorkflowTest {
                 {"source":"PROFIT","amount":1,"date":"2025-01-01"}
                 """, TransferRequest.class);
         assertEquals(TransferSource.PROFIT, legacy.fromAccount());
+    }
+
+    @Test
+    void listsCashTransferHistory() {
+        cashFlowService.transfer(new TransferRequest(TransferSource.INVESTMENT, BigDecimal.TEN,
+                LocalDate.of(2025, 1, 1)));
+
+        var history = cashFlowService.transferHistory();
+        assertEquals(1, history.size());
+        assertEquals(TransferSource.INVESTMENT, history.getFirst().getSource());
+        assertEquals(BigDecimal.TEN, history.getFirst().getAmount());
     }
 }

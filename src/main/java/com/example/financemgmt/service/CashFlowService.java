@@ -66,6 +66,14 @@ public class CashFlowService {
         }
         return transferRepository.save(new CashTransfer(request.fromAccount(), amount, request.date()));
     }
+    @Transactional(readOnly = true)
+    public List<CashTransfer> transferHistory() {
+        return transferRepository.findAllByOrderByTransferDateDescIdDesc();
+    }
+    @Transactional(readOnly = true)
+    public List<com.example.financemgmt.dto.FinancialTransactionResponse> transactionHistory() {
+        return transactionRepository.findHistory();
+    }
     public static void requireAvailable(BigDecimal available, BigDecimal requested, String account) {
         if (available.compareTo(requested) < 0) throw new ConflictException("Insufficient " + account);
     }

@@ -2,6 +2,7 @@ package com.example.financemgmt.model;
 
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
+import java.util.Locale;
 
 @Entity
 @Table(name = "customers")
@@ -11,6 +12,8 @@ public class Customer {
     private Long id;
     @Column(nullable = false, length = 150)
     private String name;
+    @Column(name = "normalized_name", nullable = false, length = 150)
+    private String normalizedName;
     @Column(name = "mobile_number", length = 40)
     private String mobileNumber;
     @Column(length = 500)
@@ -24,6 +27,7 @@ public class Customer {
 
     public Customer(String name, String mobileNumber, String address) {
         this.name = name;
+        this.normalizedName = normalizeName(name);
         this.mobileNumber = mobileNumber;
         this.address = address;
         this.createdAt = LocalDateTime.now();
@@ -32,14 +36,20 @@ public class Customer {
 
     public Long getId() { return id; }
     public String getName() { return name; }
+    public String getNormalizedName() { return normalizedName; }
     public String getMobileNumber() { return mobileNumber; }
     public String getAddress() { return address; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public String getStatus() { return status; }
     public void update(String name, String mobileNumber, String address, String status) {
         this.name = name;
+        this.normalizedName = normalizeName(name);
         this.mobileNumber = mobileNumber;
         this.address = address;
         this.status = status;
+    }
+
+    private static String normalizeName(String name) {
+        return name.trim().toLowerCase(Locale.ROOT);
     }
 }
