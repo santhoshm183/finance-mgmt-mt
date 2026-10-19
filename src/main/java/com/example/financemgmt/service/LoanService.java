@@ -1,6 +1,7 @@
 package com.example.financemgmt.service;
 
 import com.example.financemgmt.dto.LoanRequest;
+import com.example.financemgmt.dto.PendingPaymentResponse;
 import com.example.financemgmt.exception.BadRequestException;
 import com.example.financemgmt.exception.ConflictException;
 import com.example.financemgmt.exception.NotFoundException;
@@ -15,6 +16,7 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Locale;
+import java.util.ArrayList;
 
 @Service
 @Transactional
@@ -44,9 +46,18 @@ public class LoanService {
     }
 
     @Transactional(readOnly = true)
-    public List<Loan> pending(LocalDate today) {
-        System.out.println("Pending loans as of " + today + ":");
-        return loanRepository.findByNextInstallmentDateLessThanEqualOrderByNextInstallmentDateAsc(today);
+    public List<PendingPaymentResponse> pending(LocalDate today) {
+        List<PendingPaymentResponse> payments = new ArrayList<>();
+        for (Loan loan : loanRepository.findByNextInstallmentDateLessThanEqualOrderByNextInstallmentDateAsc(today)) {
+            DayOfWeek weeklyDay = loan.getWeeklyDay() == null ? null : DayOfWeek.valueOf(loan.getWeeklyDay());
+            LocalDate dueDate = loan.getNextInstallmentDate();
+            while (!dueDate.isAfter(today)) {
+                payments.add(PendingPaymentResponse.from(loan, dueDate));
+                dueDate = ScheduleCalculator.advanceDueDate(
+                        dueDate, loan.getStartDate(), loan.getRepaymentFrequency(), weeklyDay);
+            }
+        }
+        return payments;
     }
 
     public Loan create(LoanRequest request) {
@@ -57,12 +68,22 @@ public class LoanService {
         CashFlowService.requireAvailable(cashFlow.getFinancialBalance(), request.principalAmount(),
                 "financial balance");
         String id = uniqueLoanId(customer.getName(), request.startDate());
-        int count = ScheduleCalculator.installmentCount(request.principalAmount(), request.installmentAmount());
+        BigDecimal installmentAmount = request.installmentAmount();
+        int count;
+        if (request.loanType() == LoanType.MONTHLY_INTEREST) {
+            if (request.interestRate().signum() <= 0) {
+                throw new BadRequestException("MONTHLY_INTEREST loans require a positive interestRate");
+            }
+            installmentAmount = ScheduleCalculator.profit(request.principalAmount(), request.interestRate());
+            count = 0;
+        } else {
+            count = ScheduleCalculator.installmentCount(request.principalAmount(), installmentAmount);
+        }
         LocalDate nextDate = ScheduleCalculator.firstDueDate(request.startDate(), request.repaymentFrequency(),
                 weeklyDay);
         Loan loan = new Loan(id, customer, request.loanType(), request.principalAmount(), request.interestRate(),
                 request.repaymentFrequency(), weeklyDay == null ? null : weeklyDay.name(), request.startDate(),
-                request.installmentAmount(), count, nextDate);
+                installmentAmount, count, nextDate);
         loanRepository.save(loan);
         cashFlow.setFinancialBalance(cashFlow.getFinancialBalance().subtract(request.principalAmount()));
         cashFlowService.addProfit(cashFlow,

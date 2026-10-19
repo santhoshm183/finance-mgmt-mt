@@ -13,6 +13,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 @SpringBootTest
@@ -65,6 +66,43 @@ class FinanceWorkflowTest {
     }
 
     @Test
+    void pendingPaymentsExpandsEveryOverdueDailyWeeklyAndMonthlyDueDate() {
+        cashFlowService.lock().setFinancialBalance(new BigDecimal("1000.00"));
+        Customer dailyCustomer = customerService.create(new CustomerRequest("Daily Pending", null, null, null));
+        Customer weeklyCustomer = customerService.create(new CustomerRequest("Weekly Pending", null, null, null));
+        Customer monthlyCustomer = customerService.create(new CustomerRequest("Monthly Pending", null, null, null));
+
+        Loan dailyLoan = loanService.create(new LoanRequest(dailyCustomer.getId(), LoanType.INSTALLMENT_BASED,
+                new BigDecimal("100.00"), BigDecimal.ZERO, RepaymentFrequency.DAILY, null,
+                LocalDate.of(2025, 1, 1), new BigDecimal("10.00")));
+        Loan weeklyLoan = loanService.create(new LoanRequest(weeklyCustomer.getId(), LoanType.INSTALLMENT_BASED,
+                new BigDecimal("100.00"), BigDecimal.ZERO, RepaymentFrequency.WEEKLY, "MONDAY",
+                LocalDate.of(2025, 1, 1), new BigDecimal("10.00")));
+        Loan monthlyLoan = loanService.create(new LoanRequest(monthlyCustomer.getId(), LoanType.INSTALLMENT_BASED,
+                new BigDecimal("100.00"), BigDecimal.ZERO, RepaymentFrequency.MONTHLY, null,
+                LocalDate.of(2025, 1, 31), new BigDecimal("10.00")));
+
+        List<LocalDate> dailyDates = loanService.pending(LocalDate.of(2025, 1, 5)).stream()
+                .filter(payment -> payment.loanId().equals(dailyLoan.getId()))
+                .map(PendingPaymentResponse::dueDate).toList();
+        List<PendingPaymentResponse> weeklyPending = loanService.pending(LocalDate.of(2025, 1, 20));
+        List<LocalDate> weeklyDates = weeklyPending.stream().filter(payment -> payment.loanId().equals(weeklyLoan.getId()))
+                .map(PendingPaymentResponse::dueDate).toList();
+        List<PendingPaymentResponse> monthlyPending = loanService.pending(LocalDate.of(2025, 4, 30));
+        List<LocalDate> monthlyDates = monthlyPending.stream().filter(payment -> payment.loanId().equals(monthlyLoan.getId()))
+                .map(PendingPaymentResponse::dueDate).toList();
+
+        assertEquals(List.of(LocalDate.of(2025, 1, 2), LocalDate.of(2025, 1, 3),
+                LocalDate.of(2025, 1, 4), LocalDate.of(2025, 1, 5)), dailyDates);
+        assertEquals(List.of(LocalDate.of(2025, 1, 6), LocalDate.of(2025, 1, 13),
+                LocalDate.of(2025, 1, 20)), weeklyDates);
+        assertEquals(List.of(LocalDate.of(2025, 2, 28), LocalDate.of(2025, 3, 31),
+                LocalDate.of(2025, 4, 30)), monthlyDates);
+        assertEquals(weeklyPending.size(), weeklyPending.stream().map(PendingPaymentResponse::id).distinct().count());
+        assertTrue(monthlyPending.stream().allMatch(payment -> payment.amount().equals(new BigDecimal("10.00"))));
+    }
+
+    @Test
     void preservesUnicodeCustomerNamesInLoansAndJson() throws Exception {
         String customerName = "மாலதி";
         Customer customer = customerService.create(new CustomerRequest(customerName, null, null, null));
@@ -100,6 +138,30 @@ class FinanceWorkflowTest {
                 LocalDate.of(2025, 1, 1), BigDecimal.ONE);
 
         assertThrows(BadRequestException.class, () -> loanService.create(invalidFrequency));
+    }
+
+    @Test
+    void monthlyInterestLoansAcceptCollectedAndProfitTransactions() {
+        Customer customer = customerService.create(new CustomerRequest("Monthly Collections", null, null, null));
+        cashFlowService.lock().setFinancialBalance(new BigDecimal("100.00"));
+        Loan loan = loanService.create(new LoanRequest(customer.getId(), LoanType.MONTHLY_INTEREST,
+                new BigDecimal("50.00"), new BigDecimal("10.00"), RepaymentFrequency.MONTHLY, null,
+                LocalDate.of(2025, 1, 1), new BigDecimal("5.00")));
+        assertEquals(new BigDecimal("5.00"), loan.getInstallmentAmount());
+        assertEquals(0, loan.getInstallmentCount());
+        LocalDate firstDueDate = loan.getNextInstallmentDate();
+
+        collectionService.collect(new CollectionRequest(loan.getId(), firstDueDate,
+                new BigDecimal("2.00"), TransactionType.PROFIT));
+        LocalDate nextDueDate = ScheduleCalculator.advanceDueDate(firstDueDate, loan.getStartDate(),
+                loan.getRepaymentFrequency(), null);
+        assertEquals(nextDueDate, loanRepository.findById(loan.getId()).orElseThrow().getNextInstallmentDate());
+
+        collectionService.collect(new CollectionRequest(loan.getId(), firstDueDate,
+                new BigDecimal("3.00"), TransactionType.COLLECTED));
+        assertEquals(nextDueDate, loanRepository.findById(loan.getId()).orElseThrow().getNextInstallmentDate());
+        assertEquals(new BigDecimal("3.00"), cashFlowService.get().getCollectionAmount());
+        assertEquals(new BigDecimal("7.00"), cashFlowService.get().getProfitAmount());
     }
 
     @Test
@@ -148,16 +210,15 @@ class FinanceWorkflowTest {
     }
 
     @Test
-    void rejectsCollectionTypeThatDoesNotMatchLoanType() {
+    void permitsCollectedPaymentsForMonthlyInterestButRejectsProfitOnInstallmentLoans() {
         Customer customer = customerService.create(new CustomerRequest("Collection Customer", null, null, null));
         cashFlowService.lock().setFinancialBalance(new BigDecimal("100.00"));
         Loan loan = loanService.create(new LoanRequest(customer.getId(), LoanType.MONTHLY_INTEREST,
                 BigDecimal.TEN, BigDecimal.ONE, RepaymentFrequency.MONTHLY, null,
                 LocalDate.of(2025, 1, 1), BigDecimal.ONE));
 
-        assertThrows(BadRequestException.class,
-                () -> collectionService.collect(new CollectionRequest(loan.getId(), LocalDate.of(2025, 2, 1),
-                        BigDecimal.ONE, TransactionType.COLLECTED)));
+        assertDoesNotThrow(() -> collectionService.collect(new CollectionRequest(loan.getId(),
+                LocalDate.of(2025, 2, 1), BigDecimal.ONE, TransactionType.COLLECTED)));
 
         Loan installmentLoan = loanService.create(new LoanRequest(customer.getId(), LoanType.INSTALLMENT_BASED,
                 BigDecimal.TEN, BigDecimal.ZERO, RepaymentFrequency.MONTHLY, null,

@@ -27,13 +27,15 @@ public class CollectionService {
         CashFlow account = cashFlowService.lock();
         Loan loan = loanRepository.findLockedById(request.loanId())
                 .orElseThrow(() -> new NotFoundException("Loan " + request.loanId() + " was not found"));
-        TransactionType expectedType = loan.getLoanType() == LoanType.MONTHLY_INTEREST
-                ? TransactionType.PROFIT : TransactionType.COLLECTED;
-        if (request.transactionType() != expectedType) {
-            throw new BadRequestException("Transaction type for this loan must be " + expectedType);
+        if (loan.getLoanType() == LoanType.INSTALLMENT_BASED
+                && request.transactionType() != TransactionType.COLLECTED) {
+            throw new BadRequestException("Transaction type for an installment-based loan must be COLLECTED");
         }
         cashFlowService.collect(account, request.amount(), request.collectionDate(), loan.getId(), request.transactionType());
-        if (request.transactionType() == TransactionType.COLLECTED) {
+        boolean advancesDueDate = loan.getLoanType() == LoanType.MONTHLY_INTEREST
+                ? request.transactionType() == TransactionType.PROFIT
+                : request.transactionType() == TransactionType.COLLECTED;
+        if (advancesDueDate) {
             DayOfWeek day = loan.getWeeklyDay() == null ? null : DayOfWeek.valueOf(loan.getWeeklyDay());
             LocalDate next = ScheduleCalculator.advanceDueDate(loan.getNextInstallmentDate(), loan.getStartDate(),
                     loan.getRepaymentFrequency(), day);

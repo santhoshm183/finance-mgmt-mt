@@ -1,6 +1,6 @@
 package com.example.financemgmt.controller;
 
-import com.example.financemgmt.dto.LoanResponse;
+import com.example.financemgmt.dto.PendingPaymentResponse;
 import com.example.financemgmt.service.LoanService;
 import org.springframework.web.bind.annotation.*;
 import java.time.LocalDate;
@@ -13,7 +13,7 @@ public class PaymentController {
     public PaymentController(LoanService service) { this.service = service; }
 
     @GetMapping("/pending")
-    public List<LoanResponse> pending() {
-        return service.pending(LocalDate.now()).stream().map(LoanResponse::from).toList();
+    public List<PendingPaymentResponse> pending() {
+        return service.pending(LocalDate.now());
     }
 }
